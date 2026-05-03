@@ -1,0 +1,10 @@
+# flyctl launch added from .gitignore
+**\.env
+**\state.json
+**\otter.db
+**\otter.db-wal
+**\otter.db-shm
+**\.venv
+**\__pycache__
+**\*.pyc
+fly.toml

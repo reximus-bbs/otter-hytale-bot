@@ -1,0 +1,26 @@
+# fly.toml app configuration file generated for otter-hytale-bot on 2026-05-03T15:32:25-04:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'otter-hytale-bot'
+primary_region = 'ord'
+
+[build]
+
+[env]
+  DB_PATH = '/data/otter.db'
+  INSECURE_TLS = 'true'
+  POLL_SECONDS = '60'
+  QUERY_URL = 'https://otter-nonsense-hytale.nodecraft.gg:5523/Nitrado/Query'
+  RECAP_HOUR = '9'
+  RECAP_TIMEZONE = 'America/Chicago'
+  STATE_FILE = '/data/state.json'
+
+[[mounts]]
+  source = 'data'
+  destination = '/data'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '256mb'
