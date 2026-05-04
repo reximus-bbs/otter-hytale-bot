@@ -300,12 +300,16 @@ def build_status_embed(snap: Snapshot) -> discord.Embed:
         embed.add_field(name=f"Online now ({len(snap.players)})", value=names, inline=False)
 
     today = today_stats()
+    if today["hours"] >= 1:
+        played = f"{today['hours']:.1f}h"
+    else:
+        played = f"{int(today['hours'] * 60)}m"
     embed.add_field(
         name="📊 Today so far",
         value=(
             f"Peak **{today['peak']}** · "
             f"Unique players **{today['unique']}** · "
-            f"Played **{today['hours']:.1f}h**"
+            f"Played **{played}**"
         ),
         inline=False,
     )
@@ -470,11 +474,26 @@ class OtterBot(discord.Client):
         snap = await fetch_snapshot(self.http_client)
         self.latest = snap
         if snap.online:
-            self._record_snapshot(snap)
-            await self._handle_player_diff(snap)
-        await self._update_presence(snap)
-        await self._update_status_message(snap)
-        await self._update_counter(snap)
+            try:
+                self._record_snapshot(snap)
+            except Exception:
+                log.exception("record_snapshot failed")
+            try:
+                await self._handle_player_diff(snap)
+            except Exception:
+                log.exception("handle_player_diff failed")
+        try:
+            await self._update_presence(snap)
+        except Exception:
+            log.exception("update_presence failed")
+        try:
+            await self._update_status_message(snap)
+        except Exception:
+            log.exception("update_status_message failed")
+        try:
+            await self._update_counter(snap)
+        except Exception:
+            log.exception("update_counter failed")
 
     @poll.before_loop
     async def before_poll(self) -> None:
@@ -595,13 +614,45 @@ class OtterBot(discord.Client):
         embed = build_status_embed(snap)
         state = load_state()
         msg_id = state.get("status_message_id")
+
+        # Fast path: edit the cached message.
         if msg_id:
             try:
                 msg = await ch.fetch_message(int(msg_id))  # type: ignore[union-attr]
                 await msg.edit(embed=embed)
                 return
-            except discord.NotFound:
-                log.info("status message gone, creating a new one")
+            except (discord.NotFound, discord.Forbidden):
+                log.info("cached status message id %s unusable, self-healing", msg_id)
+
+        # Self-heal: find any status message this bot already pinned in the
+        # channel. If we find one, edit the newest, delete older duplicates,
+        # and refresh state.json. Survives lost state.json or message_id drift.
+        own_id = self.user.id if self.user else None
+        own_pins: list[discord.Message] = []
+        if own_id is not None:
+            try:
+                pins = await ch.pins()  # type: ignore[union-attr]
+                own_pins = [m for m in pins if m.author and m.author.id == own_id]
+            except discord.HTTPException as e:
+                log.warning("could not list pins for status channel: %s", e)
+
+        if own_pins:
+            own_pins.sort(key=lambda m: m.created_at, reverse=True)
+            keeper = own_pins[0]
+            try:
+                await keeper.edit(embed=embed)
+                state["status_message_id"] = keeper.id
+                save_state(state)
+                for stale in own_pins[1:]:
+                    try:
+                        await stale.delete()
+                    except discord.HTTPException:
+                        pass
+                return
+            except discord.HTTPException as e:
+                log.warning("failed to edit reclaimed status message: %s", e)
+
+        # No existing message to reuse — post a fresh one.
         msg = await ch.send(embed=embed)  # type: ignore[union-attr]
         try:
             await msg.pin(reason="Otter Nonsense status")
